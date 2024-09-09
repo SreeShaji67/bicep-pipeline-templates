@@ -1,0 +1,43 @@
+parameters:
+  serviceConnection: 
+  location: 
+  subscriptionId:
+  vmImageName:
+  environmentName:
+  fileName:   
+  folderPath:
+  artifactStorageAccountName:
+  artifactStorageAccountRG:
+  artifactStorageAccountContainer:
+
+stages:
+  - stage: Validate
+    jobs:
+      - template: validate.yml
+        parameters:
+          serviceConnection: ${{ parameters.serviceConnection }}
+          location: ${{ parameters.location }}
+          subscriptionId: ${{ parameters.subscriptionId }}
+          environmentName: ${{ parameters.environmentName }}
+          fileName: ${{ parameters.fileName }}
+          folderPath: ${{ parameters.folderPath }}
+          vmImageName: ${{ parameters.vmImageName }}
+
+
+  - stage: Deploy
+    dependsOn: "validate"
+    condition: succeeded()
+    jobs:
+      - template: deploy.yml
+        parameters:
+          serviceConnection: ${{ parameters.serviceConnection }}
+          location: ${{ parameters.location }}
+          subscriptionId: ${{ parameters.subscriptionId }}
+          folderPath: ${{ parameters.folderPath }}
+          vmImageName: ${{ parameters.vmImageName }}
+          environmentName: ${{ parameters.environmentName }}
+          fileName: ${{ parameters.fileName }}
+          artifactStorageAccountName: ${{ parameters.artifactStorageAccountName }}
+          artifactStorageAccountRG: ${{ parameters.artifactStorageAccountRG }}
+          artifactStorageAccountContainer: ${{ parameters.artifactStorageAccountContainer}}
+   
