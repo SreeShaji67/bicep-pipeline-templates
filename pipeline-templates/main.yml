@@ -1,43 +1,76 @@
-parameters:
-  serviceConnection: 
-  location: 
+name: Main Reusable Workflow
+
+on: workflow_call
+
+inputs:
+  serviceConnection:
+    description: 'Service connection'
+    required: true
+  location:
+    description: 'Location'
+    required: true
   subscriptionId:
+    description: 'Subscription ID'
+    required: true
   vmImageName:
+    description: 'VM Image Name'
+    required: true
   environmentName:
-  fileName:   
+    description: 'Environment Name'
+    required: true
+  fileName:
+    description: 'File Name'
+    required: true
   folderPath:
+    description: 'Folder Path'
+    required: true
   artifactStorageAccountName:
+    description: 'Artifact Storage Account Name'
+    required: true
   artifactStorageAccountRG:
+    description: 'Artifact Storage Account Resource Group'
+    required: true
   artifactStorageAccountContainer:
+    description: 'Artifact Storage Account Container'
+    required: true
 
-stages:
-  - stage: Validate
-    jobs:
-      - template: validate.yml
-        parameters:
-          serviceConnection: ${{ parameters.serviceConnection }}
-          location: ${{ parameters.location }}
-          subscriptionId: ${{ parameters.subscriptionId }}
-          environmentName: ${{ parameters.environmentName }}
-          fileName: ${{ parameters.fileName }}
-          folderPath: ${{ parameters.folderPath }}
-          vmImageName: ${{ parameters.vmImageName }}
+jobs:
+  validate:
+    name: Validate Stage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
 
+      - name: Run validation template
+        uses: ./.github/workflows/validate.yml
+        with:
+          serviceConnection: ${{ inputs.serviceConnection }}
+          location: ${{ inputs.location }}
+          subscriptionId: ${{ inputs.subscriptionId }}
+          environmentName: ${{ inputs.environmentName }}
+          fileName: ${{ inputs.fileName }}
+          folderPath: ${{ inputs.folderPath }}
+          vmImageName: ${{ inputs.vmImageName }}
 
-  - stage: Deploy
-    dependsOn: "validate"
-    condition: succeeded()
-    jobs:
-      - template: deploy.yml
-        parameters:
-          serviceConnection: ${{ parameters.serviceConnection }}
-          location: ${{ parameters.location }}
-          subscriptionId: ${{ parameters.subscriptionId }}
-          folderPath: ${{ parameters.folderPath }}
-          vmImageName: ${{ parameters.vmImageName }}
-          environmentName: ${{ parameters.environmentName }}
-          fileName: ${{ parameters.fileName }}
-          artifactStorageAccountName: ${{ parameters.artifactStorageAccountName }}
-          artifactStorageAccountRG: ${{ parameters.artifactStorageAccountRG }}
-          artifactStorageAccountContainer: ${{ parameters.artifactStorageAccountContainer}}
-   
+  deploy:
+    needs: validate
+    name: Deploy Stage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Run deploy template
+        uses: ./.github/workflows/deploy.yml
+        with:
+          serviceConnection: ${{ inputs.serviceConnection }}
+          location: ${{ inputs.location }}
+          subscriptionId: ${{ inputs.subscriptionId }}
+          folderPath: ${{ inputs.folderPath }}
+          vmImageName: ${{ inputs.vmImageName }}
+          environmentName: ${{ inputs.environmentName }}
+          fileName: ${{ inputs.fileName }}
+          artifactStorageAccountName: ${{ inputs.artifactStorageAccountName }}
+          artifactStorageAccountRG: ${{ inputs.artifactStorageAccountRG }}
+          artifactStorageAccountContainer: ${{ inputs.artifactStorageAccountContainer }}

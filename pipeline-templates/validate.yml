@@ -1,71 +1,76 @@
-parameters:
-  serviceConnection:
-  location: 
-  subscriptionId: 
-  vmImageName:
-  environmentName:
-  fileName: 
-  folderPath:
+name: Validate and Plan Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environmentName:
+        description: 'Environment Name'
+        required: true
+      vmImageName:
+        description: 'VM Image Name'
+        required: true
+      serviceConnection:
+        description: 'Azure Service Connection'
+        required: true
+      subscriptionId:
+        description: 'Azure Subscription ID'
+        required: true
+      location:
+        description: 'Deployment Location'
+        required: true
+      folderPath:
+        description: 'Folder Path for ARM Template'
+        required: true
+      fileName:
+        description: 'File Name for ARM Template'
+        required: true
 
 jobs:
-- job: 'Validation'
-  pool:
-    vmImage: ${{ parameters.vmImageName }}  
-  displayName: 'Run preflight validation'
-  continueOnError: false
-  workspace:
-    clean: outputs 
-  steps:
-  - checkout: self
-    path: ${{ parameters.environmentName }}
+  validation:
+    runs-on: ${{ inputs.vmImageName }}
+    name: 'Run preflight validation'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          path: ${{ inputs.environmentName }}
 
-  - task: AzureResourceManagerTemplateDeployment@3
-    displayName: "Validate ${{ parameters.environmentName }} Deployment"
-    inputs:
-      deploymentScope: 'Subscription'
-      ConnectedServiceName: ${{ parameters.serviceConnection }}
-      location: ${{ parameters.location }}
-      templateLocation: 'Linked artifact'
-      subscriptionId: ${{ parameters.subscriptionId }}
-      csmFile: "$(Agent.BuildDirectory)/${{ parameters.environmentName }}/${{ parameters.folderPath }}/${{ parameters.fileName }}"
-      #overrideParameters: '-environment "${{ parameters.environmentName }}" -subscriptionId "${{ parameters.subscriptionId }}" -location "${{ parameters.location }}"'
-      deploymentMode: 'Validation'
-      deploymentName: 'ValidatePipelineTemplate'
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-  - task: AzureCLI@2
-    displayName: "Plan ${{ parameters.environmentName }} Deployment"
-    condition: succeeded()
-    inputs:
-      azureSubscription: ${{ parameters.serviceConnection }}
-      scriptType: 'bash'
-      scriptLocation: 'inlineScript'
-      inlineScript: |
-        az  account set -s ${{ parameters.subscriptionId }}  
-        az deployment sub what-if \
-          --location ${{ parameters.location }} \
-          --template-file "$(Agent.BuildDirectory)/${{ parameters.environmentName }}/${{ parameters.folderPath }}/${{ parameters.fileName }}"  
-           #\--parameters environment=${{ parameters.environmentName }}  subscriptionId=${{ parameters.subscriptionId }} location=${{ parameters.location }}
+      - name: Validate Deployment
+        uses: azure/arm-deploy@v0.7.0
+        with:
+          subscriptionId: ${{ inputs.subscriptionId }}
+          templateLocation: "$(github.workspace)/${{ inputs.environmentName }}/${{ inputs.folderPath }}/${{ inputs.fileName }}"
+          deploymentName: 'ValidatePipelineTemplate'
+          deploymentMode: Validation
+        env:
+          AZURE_SUBSCRIPTION: ${{ inputs.subscriptionId }}
 
-  - task: PowerShell@2
-    name: "Copy_Artifacts"
-    displayName: "Copy ${{ parameters.environmentName }} Artifacts"
-    inputs:
-      targetType: 'inline'
-      script: |
-          # Define the path to the bicep file
-          $bicepFilePath = "$(Agent.BuildDirectory)/${{ parameters.environmentName }}/${{ parameters.folderPath }}/${{ parameters.fileName }}"
+      - name: Plan Deployment
+        if: success()
+        run: |
+          az account set -s ${{ inputs.subscriptionId }}
+          az deployment sub what-if \
+            --location ${{ inputs.location }} \
+            --template-file "$(github.workspace)/${{ inputs.environmentName }}/${{ inputs.folderPath }}/${{ inputs.fileName }}"
 
-          # Read the file content into a variable
-          #$fileContent = Get-Content -Path $bicepFilePath -Raw
+      - name: Copy Artifacts
+        if: success()
+        shell: pwsh
+        run: |
+          $bicepFilePath = "$(github.workspace)/${{ inputs.environmentName }}/${{ inputs.folderPath }}/${{ inputs.fileName }}"
           $fileContent = Get-Content -Path $bicepFilePath
-           $filteredContent = @()
-            foreach ($line in $fileContent) {
-              if (!$line.StartsWith("//")) {
-                $filteredContent += $line
-              }
+          $filteredContent = @()
+          foreach ($line in $fileContent) {
+            if (!$line.StartsWith("//")) {
+              $filteredContent += $line
             }
+          }
           $fileContent = $filteredContent -join [Environment]::NewLine
-          # Use regular expression to extract the trailing characters of the word "components"
           $trailingCharacters = [regex]::Matches($fileContent, 'components(.{1,})') | % { $_.Groups[1].Value }
           $moduleNames = @()
           foreach($string in $trailingCharacters){
@@ -74,39 +79,31 @@ jobs:
               $moduleNames += $string.Substring($start, $end - $start)
           }
           $paths = @()
-          $destination = "$(Build.ArtifactStagingDirectory)"
+          $destination = "$(github.workspace)/artifacts"
           foreach ($moduleName in $moduleNames) {
-              $paths += "$(Agent.BuildDirectory)/${{ parameters.environmentName }}/components/$moduleName"
-              # Copy each folder to the destination             
-                  Get-ChildItem $paths -Recurse | ForEach-Object {
-                      $dest = $_.FullName.Replace($paths, "$destination/components/$moduleName")
-                      if (!(Test-Path (Split-Path $dest))) {
-                          New-Item (Split-Path $dest) -ItemType Directory | Out-Null
-                      }     
-                      Write-Output "Copying file $_ to $dest"
-                      Copy-Item $_.FullName $dest -Recurse
-                  }
-                  $paths = @()
-          }
-          $mainPath= @()
-          $mainPath += "$(Agent.BuildDirectory)/${{ parameters.environmentName }}/${{ parameters.folderPath }}"
-              Get-ChildItem "$(Agent.BuildDirectory)/${{ parameters.environmentName }}/${{ parameters.folderPath }}" -Recurse | ForEach-Object {
-                  $dest = $_.FullName.Replace($mainPath, "$destination/${{ parameters.folderPath }}")
+              $paths += "$(github.workspace)/${{ inputs.environmentName }}/components/$moduleName"
+              Get-ChildItem $paths -Recurse | ForEach-Object {
+                  $dest = $_.FullName.Replace($paths, "$destination/components/$moduleName")
                   if (!(Test-Path (Split-Path $dest))) {
                       New-Item (Split-Path $dest) -ItemType Directory | Out-Null
                   }
-                  Write-Output "Copying file $_ to $dest"
                   Copy-Item $_.FullName $dest -Recurse
+              }
+              $paths = @()
           }
-         
-       
-  - task: PublishBuildArtifacts@1
-    condition: succeeded()
-    displayName: "Publish ${{ parameters.environmentName }} Artifacts"
-    inputs:
-      PathtoPublish: $(build.artifactstagingdirectory)
-      publishLocation: Container
-      ArtifactName: "${{ parameters.environmentName }}"
-         
+          $mainPath= @()
+          $mainPath += "$(github.workspace)/${{ inputs.environmentName }}/${{ inputs.folderPath }}"
+          Get-ChildItem "$(github.workspace)/${{ inputs.environmentName }}/${{ inputs.folderPath }}" -Recurse | ForEach-Object {
+              $dest = $_.FullName.Replace($mainPath, "$destination/${{ inputs.folderPath }}")
+              if (!(Test-Path (Split-Path $dest))) {
+                  New-Item (Split-Path $dest) -ItemType Directory | Out-Null
+              }
+              Copy-Item $_.FullName $dest -Recurse
+          }
 
-
+      - name: Upload Artifacts
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ inputs.environmentName }}
+          path: $(github.workspace)/artifacts

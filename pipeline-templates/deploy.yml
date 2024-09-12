@@ -1,64 +1,84 @@
-parameters:
-  serviceConnection:
-  location:
-  folderPath:
-  subscriptionId:
-  vmImageName:
-  environmentName:
-  fileName: 
-  artifactStorageAccountName:
-  artifactStorageAccountRG:
-  artifactStorageAccountContainer:
-jobs:
-- deployment: Deploy
-  displayName: 'Deploy to Subscription'
-  continueOnError: false
-  workspace:
-    clean: outputs 
-  pool:
-    vmImage: ${{ parameters.vmImageName }}
-  environment: ${{ parameters.environmentName }}
-  strategy:
-    runOnce:
-      deploy: 
-        steps:
-        - download: none
-        - task: DownloadBuildArtifacts@0
-          condition: succeeded()
-          displayName: "Downloading ${{ parameters.environmentName }} Artifacts"
-          inputs:
-            buildType: "current"
-            downloadType: "single"
-            artifactName: "${{ parameters.environmentName }}"
-            downloadPath: "$(System.ArtifactsDirectory)"
-                         
-        - task: AzureResourceManagerTemplateDeployment@3
-          displayName: "Deploy to ${{ parameters.environmentName }}"
-          condition: succeeded()
-          inputs:
-            deploymentScope: 'Subscription'
-            ConnectedServiceName: ${{ parameters.serviceConnection }}
-            location: ${{ parameters.location }}
-            templateLocation: 'Linked artifact'
-            subscriptionId: ${{ parameters.subscriptionId }}
-            csmFile: "$(System.ArtifactsDirectory)/${{ parameters.environmentName }}/${{ parameters.folderPath }}/${{ parameters.fileName }}"
-            #overrideParameters: '-environment ${{ parameters.environmentName }}  -subscriptionId ${{ parameters.subscriptionId }} -location ${{ parameters.location }}'
-            deploymentMode: 'Incremental'
-            deploymentName: "deploy_to_${{ parameters.environmentName }}" 
+name: Deploy to Subscription
 
-        - task: AzureCLI@2
-          displayName: "Publish to Storage Account"
-          condition: succeeded()
-          inputs:
-            azureSubscription: ${{ parameters.serviceConnection }}
-            scriptType: 'pscore'
-            scriptLocation: 'inlineScript'
-            inlineScript: |
-              az  account set -s ${{ parameters.subscriptionId }}  
-                            $connectionString = az storage account show-connection-string -n ${{ parameters.artifactStorageAccountName }} -g ${{ parameters.artifactStorageAccountRG }}  --query connectionString -o tsv
-                            $isContainerExists = az storage container exists --name ${{ parameters.artifactStorageAccountContainer}} --account-name ${{ parameters.artifactStorageAccountName }} --connection-string $connectionString  --query exists -o tsv
-                            $timeStamp  = Get-Date -Format "yyyyMMdd-HHmmss"
-                            if($isContainerExists -ne $true){
-                              az storage container create --name ${{ parameters.artifactStorageAccountContainer}} --account-name ${{ parameters.artifactStorageAccountName }} --public-access off --connection-string $connectionString 
-                            }                            
-                            az storage blob upload-batch --destination "${{ parameters.artifactStorageAccountContainer}}\$timeStamp" --source "$(System.ArtifactsDirectory)" --connection-string $connectionString --account-name ${{ parameters.artifactStorageAccountName }} --pattern "*"                      
+on:
+  workflow_dispatch:
+    inputs:
+      environmentName:
+        description: 'Environment Name'
+        required: true
+      vmImageName:
+        description: 'VM Image Name'
+        required: true
+      serviceConnection:
+        description: 'Azure Service Connection'
+        required: true
+      subscriptionId:
+        description: 'Azure Subscription ID'
+        required: true
+      location:
+        description: 'Deployment Location'
+        required: true
+      folderPath:
+        description: 'Folder Path for ARM Template'
+        required: true
+      fileName:
+        description: 'File Name for ARM Template'
+        required: true
+      artifactStorageAccountName:
+        description: 'Artifact Storage Account Name'
+        required: true
+      artifactStorageAccountRG:
+        description: 'Artifact Storage Account Resource Group'
+        required: true
+      artifactStorageAccountContainer:
+        description: 'Artifact Storage Account Container'
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ${{ inputs.vmImageName }}
+
+    environment: ${{ inputs.environmentName }}
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }} # You need to set this secret in GitHub Secrets.
+
+    - name: Download Artifacts
+      if: success()
+      run: |
+        echo "Downloading ${{ inputs.environmentName }} Artifacts"
+        # Add the logic to download artifacts or use GitHub's cache if applicable
+
+    - name: ARM Template Deployment
+      if: success()
+      uses: azure/arm-deploy@v0.7.0
+      with:
+        scope: subscription
+        subscriptionId: ${{ inputs.subscriptionId }}
+        resourceGroupName: ${{ inputs.artifactStorageAccountRG }} 
+        templateLocation: "$(System.ArtifactsDirectory)/${{ inputs.environmentName }}/${{ inputs.folderPath }}/${{ inputs.fileName }}"
+        deploymentName: "deploy_to_${{ inputs.environmentName }}"
+        deploymentMode: Incremental
+      env:
+        AZURE_SUBSCRIPTION: ${{ inputs.subscriptionId }}
+        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+    - name: Publish to Storage Account
+      if: success()
+      run: |
+        az account set -s ${{ inputs.subscriptionId }}
+        connectionString=$(az storage account show-connection-string -n ${{ inputs.artifactStorageAccountName }} -g ${{ inputs.artifactStorageAccountRG }} --query connectionString -o tsv)
+        isContainerExists=$(az storage container exists --name ${{ inputs.artifactStorageAccountContainer}} --account-name ${{ inputs.artifactStorageAccountName }} --connection-string $connectionString --query exists -o tsv)
+        timeStamp=$(date +"%Y%m%d-%H%M%S")
+        if [[ $isContainerExists != "true" ]]; then
+          az storage container create --name ${{ inputs.artifactStorageAccountContainer}} --account-name ${{ inputs.artifactStorageAccountName }} --public-access off --connection-string $connectionString
+        fi
+        az storage blob upload-batch --destination "${{ inputs.artifactStorageAccountContainer}}/$timeStamp" --source "$(System.ArtifactsDirectory)" --connection-string $connectionString --account-name ${{ inputs.artifactStorageAccountName }}
