@@ -3,9 +3,6 @@ name: Main Reusable Workflow
 on: workflow_call
 
 inputs:
-  serviceConnection:
-    description: 'Service connection'
-    required: true
   location:
     description: 'Location'
     required: true
@@ -45,7 +42,6 @@ jobs:
       - name: Run validation template
         uses: ./.github/workflows/validate.yml
         with:
-          serviceConnection: ${{ inputs.serviceConnection }}
           location: ${{ inputs.location }}
           subscriptionId: ${{ inputs.subscriptionId }}
           environmentName: ${{ inputs.environmentName }}
@@ -64,7 +60,6 @@ jobs:
       - name: Run deploy template
         uses: ./.github/workflows/deploy.yml
         with:
-          serviceConnection: ${{ inputs.serviceConnection }}
           location: ${{ inputs.location }}
           subscriptionId: ${{ inputs.subscriptionId }}
           folderPath: ${{ inputs.folderPath }}
